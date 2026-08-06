@@ -1,0 +1,6 @@
+pydantic>=2.4.2
+pydantic-settings>=2.0.3
+aiomqtt>=0.16.1
+aiohttp>=3.9.0
+pandas>=2.1.0
+python-dotenv>=1.0.0
