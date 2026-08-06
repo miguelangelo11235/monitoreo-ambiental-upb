@@ -70,16 +70,19 @@ class CollectorService:
 
             adapters = self.sensor_manager.get_all_adapters()
             if adapters:
-                # Lectura en paralelo de todos los sensores usando asyncio.gather
                 tasks = [self._read_single_sensor(adapter) for adapter in adapters]
                 await asyncio.gather(*tasks, return_exceptions=True)
             else:
                 logger.debug("No hay sensores activos para recolectar datos.")
 
-            # Calcular el tiempo restante para cumplir los 60s de intervalo
             elapsed = (datetime.now() - start_time).total_seconds()
             sleep_time = max(1.0, 60.0 - elapsed)
-            await asyncio.sleep(sleep_time)
+            
+            # Dormir en pequeñas iteraciones para permitir cancelación rápida
+            slept = 0.0
+            while self._running and slept < sleep_time:
+                await asyncio.sleep(0.5)
+                slept += 0.5
 
     async def sync_loop(self) -> None:
         """Loop de sincronización ejecutado periódicamente (cada 15 minutos en :00, :15, :30, :45)."""
@@ -90,13 +93,11 @@ class CollectorService:
             if _should_sync(now) and now.minute != last_synced_minute:
                 last_synced_minute = now.minute
                 self.last_sync_time = now
-                logger.info(f"Sincronizando buffer local SQLite -> CSV / InfluxDB a las {now.strftime('%H:%M:%S')}...")
+                logger.info(f"Sincronizando buffer local SQLite -> CSV a las {now.strftime('%H:%M:%S')}...")
                 try:
-                    # Flush SQLite buffer a CSV
                     count = await self.sqlite_buffer.flush_to_csv(self.csv_storage)
                     logger.info(f"Sincronización completada: {count} registros transferidos a CSV.")
 
-                    # Intento opcional de sincronización a InfluxDB
                     if self.influx_storage and self.influx_storage.url:
                         unsynced_measurements = await self.sqlite_buffer.read_since(now)
                         for m in unsynced_measurements:
@@ -105,7 +106,11 @@ class CollectorService:
                     logger.error(f"Error en bucle de sincronización: {e}")
                     await self.alert_service.notify_db_error(str(e))
 
-            await asyncio.sleep(20)  # Verificar cada 20s
+            # Esperar 5s verificando _running para respuesta rápida
+            slept = 0.0
+            while self._running and slept < 5.0:
+                await asyncio.sleep(0.5)
+                slept += 0.5
 
     async def start(self) -> None:
         if self._running:
@@ -115,17 +120,25 @@ class CollectorService:
         self._sync_task = asyncio.create_task(self.sync_loop())
         logger.info("CollectorService iniciado.")
 
-    async def shutdown(self) -> None:
-        logger.info("Deteniendo CollectorService...")
+    async def stop(self) -> None:
+        """Detiene los bucles de recolección en segundo plano de forma limpia sin cerrar storages."""
+        if not self._running:
+            return
+        logger.info("Pausando bucles de recolección...")
         self._running = False
         if self._collect_task:
             self._collect_task.cancel()
+            self._collect_task = None
         if self._sync_task:
             self._sync_task.cancel()
-        
-        # Sincronización final antes de apagar
+            self._sync_task = None
+        logger.info("Recolección pausada exitosamente.")
+
+    async def shutdown(self) -> None:
+        logger.info("Deteniendo CollectorService y cerrando persistencia...")
+        await self.stop()
         try:
-            logger.info("Realizando vaciado final del buffer a CSV...")
+            logger.info("Realizando vaciado final del buffer SQLite a CSV...")
             await self.sqlite_buffer.flush_to_csv(self.csv_storage)
         except Exception as e:
             logger.error(f"Error durante el flush final: {e}")

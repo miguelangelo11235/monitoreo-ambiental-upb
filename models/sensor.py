@@ -10,6 +10,7 @@ class SensorConfig(BaseModel):
     ip: str = "127.0.0.1"
     broker: Optional[str] = "127.0.0.1"
     topic: Optional[str] = None
+    station_id: Optional[str] = None  # ID de estación en WeatherLink v2 API (entero o UUID)
     location: str = ""
     enabled: bool = True
     timeout_seconds: int = Field(default=5, ge=1)

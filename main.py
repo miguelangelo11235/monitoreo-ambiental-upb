@@ -45,10 +45,7 @@ async def main():
         alert_service=alert_service
     )
 
-    # 4. Iniciar servicio de recolección en segundo plano
-    await collector.start()
-
-    # 5. Iniciar CLI Menu
+    # 4. Iniciar CLI Menu (El recolector se activa opcionalmente desde la Opción 1 del Menú)
     cli = CLIMenu(
         collector_service=collector,
         sensor_manager=sensor_manager,
@@ -66,13 +63,12 @@ async def main():
         try:
             loop.add_signal_handler(sig, handle_signal)
         except NotImplementedError:
-            # Signal handlers no soportados en algunas plataformas de Windows
             pass
 
     try:
         await cli.show_main_menu()
     except (KeyboardInterrupt, asyncio.CancelledError):
-        logger.info("Interrupción por teclado capturada.")
+        logger.info("Interrupción de teclado capturada en main.")
     finally:
         await collector.shutdown()
         logger.info("=== Sistema finalizado correctamente ===")

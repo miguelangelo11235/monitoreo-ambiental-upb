@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from datetime import datetime
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 from models.sensor import SensorConfig
 from models.measurement import Measurement
@@ -12,30 +12,17 @@ logger = logging.getLogger("adapters.airlink")
 
 
 def parse_airlink_response(json_data: Dict[str, Any]) -> Dict[str, Any]:
-    """Extrae y normaliza las métricas recibidas de la API de Davis AirLink."""
+    """Extrae y normaliza las métricas recibidas de la API local o nube de Davis AirLink."""
     metrics = {}
     try:
         data = json_data.get("data", json_data)
         conditions = data.get("conditions", [])
         if isinstance(conditions, list) and len(conditions) > 0:
-            cond = conditions[0]
-            if "temp" in cond:
-                metrics["temperature"] = cond["temp"]
-            if "hum" in cond:
-                metrics["humidity"] = cond["hum"]
-            if "dew_point" in cond:
-                metrics["dew_point"] = cond["dew_point"]
-            if "wet_bulb" in cond:
-                metrics["wet_bulb"] = cond["wet_bulb"]
-            if "heat_index" in cond:
-                metrics["heat_index"] = cond["heat_index"]
-            if "pm_1" in cond:
-                metrics["pm_1"] = cond["pm_1"]
-            if "pm_2p5" in cond:
-                metrics["pm_2p5"] = cond["pm_2p5"]
-            if "pm_10" in cond:
-                metrics["pm_10"] = cond["pm_10"]
-        else:
+            for cond in conditions:
+                for key in ["temp", "temperature", "hum", "humidity", "dew_point", "wet_bulb", "heat_index", "pm_1", "pm_2p5", "pm_10", "pressure"]:
+                    if key in cond:
+                        metrics[key] = cond[key]
+        elif isinstance(data, dict):
             for key in ["temp", "temperature", "hum", "humidity", "pressure"]:
                 if key in data:
                     metrics[key] = data[key]
@@ -45,7 +32,7 @@ def parse_airlink_response(json_data: Dict[str, Any]) -> Dict[str, Any]:
 
 
 class AirlinkAdapter(BaseSensorAdapter):
-    """Adaptador para sensor Davis AirLink mediante API REST HTTP local."""
+    """Adaptador para sensor Davis AirLink mediante API REST HTTP local o WeatherLink v2 API en nube."""
 
     def __init__(self, config: SensorConfig):
         super().__init__(config)
@@ -68,7 +55,10 @@ class AirlinkAdapter(BaseSensorAdapter):
             raise Exception("aiohttp no disponible")
 
     async def fallback_to_davis_api(self) -> Dict[str, Any]:
-        return await self.fallback_handler.try_fallback(self.config.id, self.consecutive_errors)
+        station_id = self.config.station_id or self.config.id
+        return await self.fallback_handler.try_fallback(
+            self.config.id, self.consecutive_errors, station_id=station_id
+        )
 
     async def read(self) -> Measurement:
         timestamp = datetime.now()
