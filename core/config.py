@@ -44,6 +44,7 @@ try:
         log_level: str = "INFO"
         sensors_config_path: str = "sensors_config.json"
         mongo_uri: Optional[str] = "mongodb://localhost:27017"
+        mongo_uri_template: str = "mongodb+srv://<USER>:<PASSWORD>@tests.xqm2ykn.mongodb.net/air_quality?retryWrites=true&w=majority&appName=Tests"
         mongo_db: str = "air_quality"
         mongo_collection: str = "raw_measurements"
         mongo_save_interval_min: int = 15
@@ -72,6 +73,7 @@ except ImportError:
             log_level: str = "INFO"
             sensors_config_path: str = "sensors_config.json"
             mongo_uri: Optional[str] = "mongodb://localhost:27017"
+            mongo_uri_template: str = "mongodb+srv://<USER>:<PASSWORD>@tests.xqm2ykn.mongodb.net/air_quality?retryWrites=true&w=majority&appName=Tests"
             mongo_db: str = "air_quality"
             mongo_collection: str = "raw_measurements"
             mongo_save_interval_min: int = 15
@@ -98,9 +100,11 @@ except ImportError:
             log_level: str = os.getenv("LOG_LEVEL", "INFO")
             sensors_config_path: str = os.getenv("SENSORS_CONFIG_PATH", "sensors_config.json")
             mongo_uri: Optional[str] = os.getenv("MONGO_URI", "mongodb://localhost:27017")
+            mongo_uri_template: str = os.getenv("MONGO_URI_TEMPLATE", "mongodb+srv://<USER>:<PASSWORD>@tests.xqm2ykn.mongodb.net/air_quality?retryWrites=true&w=majority&appName=Tests")
             mongo_db: str = os.getenv("MONGO_DB", "air_quality")
             mongo_collection: str = os.getenv("MONGO_COLLECTION", "raw_measurements")
             mongo_save_interval_min: int = int(os.getenv("MONGO_SAVE_INTERVAL_MIN", 15))
+
 
 
 settings = Settings()
