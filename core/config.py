@@ -43,6 +43,10 @@ try:
         davis_api_secret: Optional[str] = None
         log_level: str = "INFO"
         sensors_config_path: str = "sensors_config.json"
+        mongo_uri: Optional[str] = "mongodb://localhost:27017"
+        mongo_db: str = "air_quality"
+        mongo_collection: str = "raw_measurements"
+        mongo_save_interval_min: int = 15
 
         model_config = SettingsConfigDict(
             env_file=".env",
@@ -67,6 +71,10 @@ except ImportError:
             davis_api_secret: Optional[str] = None
             log_level: str = "INFO"
             sensors_config_path: str = "sensors_config.json"
+            mongo_uri: Optional[str] = "mongodb://localhost:27017"
+            mongo_db: str = "air_quality"
+            mongo_collection: str = "raw_measurements"
+            mongo_save_interval_min: int = 15
 
             class Config:
                 env_file = ".env"
@@ -89,6 +97,11 @@ except ImportError:
             davis_api_secret: Optional[str] = os.getenv("DAVIS_API_SECRET")
             log_level: str = os.getenv("LOG_LEVEL", "INFO")
             sensors_config_path: str = os.getenv("SENSORS_CONFIG_PATH", "sensors_config.json")
+            mongo_uri: Optional[str] = os.getenv("MONGO_URI", "mongodb://localhost:27017")
+            mongo_db: str = os.getenv("MONGO_DB", "air_quality")
+            mongo_collection: str = os.getenv("MONGO_COLLECTION", "raw_measurements")
+            mongo_save_interval_min: int = int(os.getenv("MONGO_SAVE_INTERVAL_MIN", 15))
 
 
 settings = Settings()
+

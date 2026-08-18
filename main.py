@@ -12,6 +12,7 @@ from services.alert_service import AlertService
 from storage.sqlite_buffer import SQLiteBuffer
 from storage.csv_storage import CSVStorage
 from storage.influxdb_storage import InfluxDBStorage
+from storage.mongodb_storage import MongoDBStorage
 from ui.cli import CLIMenu
 
 logger = setup_logger("main")
@@ -30,6 +31,11 @@ async def main():
         org=settings.influxdb_org,
         bucket=settings.influxdb_bucket
     )
+    mongo_storage = MongoDBStorage(
+        uri=settings.mongo_uri,
+        db_name=settings.mongo_db,
+        collection_name=settings.mongo_collection
+    )
 
     # 2. Iniciar Broker MQTT
     mqtt_manager = MQTTBrokerManager(settings.mqtt_broker, settings.mqtt_port)
@@ -42,7 +48,9 @@ async def main():
         sqlite_buffer=sqlite_buffer,
         csv_storage=csv_storage,
         influx_storage=influx_storage,
-        alert_service=alert_service
+        mongo_storage=mongo_storage,
+        alert_service=alert_service,
+        sync_interval_min=settings.mongo_save_interval_min
     )
 
     # 4. Iniciar CLI Menu (El recolector se activa opcionalmente desde la Opción 1 del Menú)
@@ -50,8 +58,10 @@ async def main():
         collector_service=collector,
         sensor_manager=sensor_manager,
         sqlite_buffer=sqlite_buffer,
-        csv_storage=csv_storage
+        csv_storage=csv_storage,
+        mongo_storage=mongo_storage
     )
+
 
     loop = asyncio.get_running_loop()
 

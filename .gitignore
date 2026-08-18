@@ -26,3 +26,9 @@ logs/
 .idea/
 *.swp
 *.swo
+
+# Reference directories
+Fase 1 - Basic Logger/
+AirLink Configuration/
+
+

@@ -1,23 +1,15 @@
 {
   "sensors": [
     {
-      "id": "airlink_01",
-      "name": "Davis AirLink - Lab A",
+      "id": "Airlink SITEM SEMGAS",
+      "name": "Airlink SITEM SEMGAS",
       "type": "airlink",
       "protocol": "http",
-      "ip": "192.168.1.100",
-      "location": "Techo Lab A",
-      "enabled": true,
-      "timeout_seconds": 5
-    },
-    {
-      "id": "esp32_temp_01",
-      "name": "ESP32 Temperatura",
-      "type": "mqtt",
-      "protocol": "mqtt",
-      "ip": "127.0.0.1",
-      "topic": "campus/lab_a/temperature",
-      "location": "Esquina Lab A",
+      "ip": "192.168.1.49",
+      "broker": "127.0.0.1",
+      "topic": null,
+      "station_id": "243743",
+      "location": "Lab",
       "enabled": true,
       "timeout_seconds": 5
     }

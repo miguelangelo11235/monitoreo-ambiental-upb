@@ -151,67 +151,72 @@ Componentes que orquestan lógica de negocios: coordinan adaptadores, manejan ti
 
 3. **`collector_service.py` - Orquestador principal** ⭐
    - **Loop de lectura (cada minuto):**
-     - Itera sobre todos los sensores
+     - Itera sobre todos los sensores activos
      - Llama `sensor.read()` para cada uno (en paralelo con asyncio)
+     - Imprime en consola un log continuo en línea directa: `Timestamp | Sensor | Temp °C | Hum % | PM1.0 | PM2.5 | PM10.0`
      - Captura excepciones: si uno falla, continúa con los demás
-     - Escribe medición en SQLite buffer (incluso con errores)
+     - Escribe medición en el buffer SQLite (incluso con errores)
    - **Loop de sincronización (cada 15 min):**
-     - Verifica si es :00, :15, :30 o :45
-     - Lee todas las mediciones del buffer desde último sync
-     - Escribe en CSV y (opcionalmente) en InfluxDB
-     - Limpia el buffer
-   - **Manejo de alertas:** delega a `alert_service`
+     - Verifica si el minuto actual es múltiplo del intervalo configurado (`MONGO_SAVE_INTERVAL_MIN`, ej: `:00`, `:15`, `:30`, `:45`)
+     - Lee mediciones del buffer desde la última sincronización
+     - Sincroniza SQLite -> CSV local, InfluxDB (opcional) y envía el documento BSON completo a MongoDB (`air_quality.raw_measurements`)
+   - **Manejo de alertas:** delega la notificación de errores a `alert_service`
 
 4. **`network_service.py` - Diagnósticos de conectividad**
-   - `ping(sensor_ip)` → verifica si sensor responde
-   - `test_adapter(adapter)` → intenta lectura de prueba
-   - Usado en CLI para testear sensores antes de guardar config
+   - `test_http_endpoint(url)` → verifica respuesta HTTP local
+   - `test_mqtt_connection(broker)` → verifica conectividad al broker MQTT
+   - Utilizado en la interfaz CLI para validar sensores y conectividad
 
 5. **`alert_service.py` - Notificaciones de fallos**
-   - Cuando sensor no responde: escribe evento en SQLite
-   - Registra en log: qué sensor, cuándo, por qué
-   - Opcionalmente: envía email o notificación a stdout
-   - **Importante:** no interrumpe el flujo principal; los fallos son no-bloqueantes
+   - Cuando un sensor o base de datos falla: registra el evento en SQLite
+   - Escribe en logs detalles del fallo
+   - Operaciones no bloqueantes: garantiza que un error en un sensor no detenga a los demás
+
+6. **`log_service.py` - Configuración de Logging**
+   - Configura formateadores, manejadores de flujo y niveles de log del sistema (`setup_logger`)
 
 #### **3.2.4 Almacenamiento (`storage/`)**
 
-Abstracción de persistencia: permite cambiar backend sin afectar el resto del código.
+Abstracción de persistencia: permite cambiar o agregar backends de almacenamiento sin afectar el resto del código.
 
 1. **`base.py` - Interfaz abstracta**
-   ```
+   ```python
    BaseStorage:
-     - async write(measurement: Measurement) → None
-     - async read_since(timestamp: datetime) → List[Measurement]
-     - async delete_older_than(days: int) → None
+     - async write(measurement: Measurement) -> None
+     - async read_since(timestamp: datetime) -> List[Measurement]
+     - async delete_older_than(days: int) -> None
+     - async flush() -> None
    ```
 
 2. **`csv_storage.py` - Almacenamiento en CSV local**
    - Append-only: cada medición es una fila
-   - Headers: `timestamp,sensor_id,location,metric_name,metric_value,quality`
-   - Archivo: `data/measurements.csv`
-   - Usado como formato de exportación estándar
-   - Fácil de leer en Excel o pandas
+   - Ruta por defecto: `data/measurements.csv`
+   - Usado como formato de exportación e histórico local fácil de procesar en Excel o pandas
 
 3. **`sqlite_buffer.py` - Buffer resiliente local** ⭐
-   - Tabla: `measurements` (timestamp, sensor_id, metrics JSON, quality)
-   - Tabla: `events` (para alertas y eventos de sistema)
-   - Cada lectura se persiste inmediatamente (transaccional)
-   - Si Pi se cae, datos no se pierden
-   - Capacidad: ~100K mediciones (meses de datos a 5 sensores, lectura c/ min)
-   - Método `flush()`: vacía a CSV/InfluxDB
+   - Base de datos SQLite local (`data/sensor_buffer.db`) con tablas `measurements` y `events`
+   - Resiliencia: las lecturas se persisten de inmediato en disco local
+   - Vaciado hacia CSV (`flush_to_csv()`) durante las ventanas de sincronización
 
-4. **`influxdb_storage.py` - Base de datos en nube (etapa 2)**
-   - Solo se implementa cuando tengas conectividad a nube
-   - Contiene métodos stub inicialmente
-   - Acceso: InfluxDB Cloud o autohospeado
-   - Retiene histórico completo, permite queries por rango temporal
+4. **`influxdb_storage.py` - Base de datos de series de tiempo**
+   - Soporte para InfluxDB Cloud / Local para análisis de series de tiempo y dashboards
+
+5. **`mongodb_storage.py` - Base de datos de documentos MongoDB** ⭐
+   - Persistencia asíncrona no bloqueante mediante `asyncio.to_thread`
+   - Conexión dinámica a MongoDB Local o MongoDB Atlas (vía `MONGO_URI`)
+   - Almacena cada 15 minutos el payload completo obtenido del sensor en la colección `raw_measurements` de la base de datos `air_quality`
+   - Preserva metadatos (`did`, `name`, `ts`), mediciones directas y calculadas (`temp`, `hum`, `dew_point`, `pm_1_last`, `pm_2p5_nowcast`, etc.)
+
+6. **`__init__.py` - Exportación de la capa Storage**
+   - Exporta de forma unificada `BaseStorage`, `CSVStorage`, `SQLiteBuffer`, `InfluxDBStorage` y `MongoDBStorage`
 
 #### **3.2.5 Configuración y Utilidades (`core/`)**
 
-1. **`config.py` - Carga de variables globales**
-   - Lee `.env` (credenciales, paths, configuración de ambiente)
-   - Ejemplo `.env`:
-     ```
+1. **`config.py` - Carga y gestión de variables globales**
+   - Lee el archivo `.env` mediante Pydantic Settings (o fallbacks a `BaseSettings` / `BaseModel`)
+   - Función `save_env_variable()` para actualizar dinámicamente variables en el archivo `.env`
+   - Variables gestionadas:
+     ```env
      MQTT_BROKER=127.0.0.1
      MQTT_PORT=1883
      CSV_PATH=data/measurements.csv
@@ -221,75 +226,85 @@ Abstracción de persistencia: permite cambiar backend sin afectar el resto del c
      DAVIS_API_KEY=your_key_here
      DAVIS_API_SECRET=your_secret_here
      LOG_LEVEL=INFO
+     MONGO_URI=mongodb://localhost:27017
+     MONGO_DB=air_quality
+     MONGO_COLLECTION=raw_measurements
+     MONGO_SAVE_INTERVAL_MIN=15
      ```
-   - Validación: asegura que variables requeridas existan
-   - Tipado con Pydantic
 
 ### 3.3 Capa de Presentación (UI)
 
 **CLI interactiva** (`ui/cli.py`):
 
-Menú en consola que permite:
-1. **Listar sensores:** muestra estado de cada uno (online/offline, última medición)
-2. **Agregar sensor:** wizard interactivo
-   - Solicita: ID, tipo (airlink/mqtt), IP, location
-   - Testea conexión: `network_service.ping()`
-   - Valida configuración
-   - Agrega a `sensors_config.json`
-3. **Remover sensor:** por ID
-4. **Ver mediciones:** tabla en tiempo real de últimas lecturas
-5. **Exportar datos:** a CSV (rango de fechas)
-6. **Test de conectividad:** verifica que todos los sensores respondan
-7. **Ver logs:** últimos errores
+Menú interactivo en consola con 8 opciones principales:
+1. **Agregar sensor:** asistente wizard (AirLink local/nube, MQTT, ESP32)
+2. **Remover sensor:** eliminación dinámica por ID
+3. **Verificar Estado del Sistema:** reporte tabular de sensores y estado de conectividad a MongoDB, SQLite y CSV
+4. **Probar Conectividad Sensores y Base de Datos:** ping a endpoints de sensores y test rápido de ping a MongoDB
+5. **Tomar Lectura Actual (Bajo demanda):** ejecuta lectura instantánea y muestra la línea de estado con `ts`, `temp` en °C, `hum`, `PM1.0`, `PM2.5` y `PM10.0`
+6. **Iniciar Monitoreo Activo (Ctrl+C para volver):** bucle continuo con salida por línea directa
+7. **Generar Archivo de Reporte (CSV):** exportación de histórico por rango de días
+8. **Salir:** cierre seguro del sistema y desconexión limpia de storages y servicios
 
-**Salida típica:**
-```
-╔════════════════════════════════════════════════════════════════╗
-║           SISTEMA DE MONITOREO AMBIENTAL - CAMPUS             ║
-╚════════════════════════════════════════════════════════════════╝
+---
 
-SENSORES ACTIVOS:
-┌──────────────┬─────────────────────┬────────────────┬─────────┐
-│ ID           │ Ubicación           │ Última lectura │ Estado  │
-├──────────────┼─────────────────────┼────────────────┼─────────┤
-│ airlink_01   │ Techo Lab A         │ 14:32:15       │ ✓ OK    │
-│ esp32_temp_01│ Esquina Lab A       │ 14:32:12       │ ✓ OK    │
-│ esp32_co2_01 │ Pasillo Central     │ 14:24:33       │ ✗ FAIL  │
-└──────────────┴─────────────────────┴────────────────┴─────────┘
+### 3.4 Estructura del Proyecto y Propósito de Archivos y Carpetas
 
-ÚLTIMAS MEDICIONES:
-airlink_01 (14:32:15):
-  • Temperatura: 24.5°C
-  • Humedad: 62.3%
-  • Presión: 1013.2 hPa
-  
-esp32_temp_01 (14:32:12):
-  • Temperatura: 25.1°C
-  • Humedad: 58.7%
+A continuación se detalla la estructura física completa del repositorio y el propósito de cada directorio y archivo:
 
->>> Menu: [A]gregar [R]emover [V]er [E]xportar [T]est [Q]uit:
-```
-
-### 3.4 Almacenamiento de Archivos
-
-```
-airlink_project/
+```text
+Monitoreo Ambiental UPB/
 │
-├── sensors_config.json
-│   └── Configuración de sensores (JSON dinámico, editado por CLI)
+├── main.py                     # Punto de entrada principal del sistema (inicializa MQTT, storages, CollectorService y CLI)
+├── sensors_config.json         # Configuración dinámica JSON con la lista de sensores registrados
+├── requirements.txt            # Dependencias del proyecto Python (pydantic, aiomqtt, aiohttp, pandas, pymongo, etc.)
+├── .env                        # Variables de entorno locales (credenciales, URIs de MongoDB, InfluxDB, etc.)
+├── .env.example                # Plantilla de variables de entorno de referencia para el equipo
+├── .gitignore                  # Reglas de exclusión de Git (datos locales, logs, entornos virtuales y carpeta Fase 1)
+├── README.md                   # Documentación principal de inicio rápido
+├── PROCEDIMIENTO.md            # Guía detallada de procedimientos y despliegue del sistema
+├── arquitectura_sistema_monitoreo.md # Documento de arquitectura técnica del sistema
 │
-└── data/
-    ├── measurements.csv
-    │   └── Histórico de mediciones (append-only)
-    │       Formato: timestamp,sensor_id,location,metric_name,metric_value,quality
-    │       Ejemplo:
-    │       2024-08-06T14:00:00,airlink_01,Techo Lab A,temperature,24.5,ok
-    │       2024-08-06T14:00:00,airlink_01,Techo Lab A,humidity,62.3,ok
-    │
-    └── sensor_buffer.db
-        └── SQLite buffer (tablas: measurements, events)
-            Usado para resiliencia local antes de sync a CSV
+├── adapters/                   # Capa de adaptadores de adquisición de datos de sensores
+│   ├── __init__.py             # Módulo de inicialización del paquete de adaptadores
+│   ├── base_sensor.py          # Clase abstracta BaseSensorAdapter que define el contrato read() -> Measurement
+│   ├── airlink_adapter.py      # Adaptador HTTP para Davis AirLink (captura metadatos ts/did y payload completo)
+│   ├── mqtt_sensor_adapter.py  # Adaptador para sensores MQTT personalizados (ESP32, Pico W)
+│   └── fallback_handler.py     # Manejador de redundancia (fallback a WeatherLink Cloud v2 API si falla AirLink local)
+│
+├── core/                       # Módulo core de configuración central del sistema
+│   └── config.py               # Gestión de Settings con Pydantic y guardado dinámico en .env
+│
+├── models/                     # Modelos de datos y esquemas Pydantic
+│   ├── measurement.py          # Modelo de datos Measurement (sensor_id, timestamp, location, metrics, quality)
+│   └── sensor.py               # Modelo de datos SensorConfig (id, name, type, protocol, ip, topic, enabled, etc.)
+│
+├── services/                   # Lógica de negocios y orquestación de procesos
+│   ├── sensor_manager.py       # Gestor dinámico de carga, instanciación y edición de sensores en sensors_config.json
+│   ├── collector_service.py    # Orquestador del bucle de recolección (60s) y bucle de sincronización (15m a MongoDB/CSV)
+│   ├── mqtt_broker.py          # Gestor de inicio, supervisión y reconexión del broker MQTT (Mosquitto)
+│   ├── network_service.py      # Diagnósticos de conectividad de red (HTTP y MQTT)
+│   ├── alert_service.py        # Registro y notificación de fallos sin interrupción del sistema
+│   └── log_service.py          # Configuración del sistema de registros (logging)
+│
+├── storage/                    # Capa de persistencia y almacenamiento de datos
+│   ├── __init__.py             # Módulo de exportación unificada de storages (incluyendo MongoDBStorage)
+│   ├── base.py                 # Clase abstracta BaseStorage (write, read_since, delete_older_than, flush)
+│   ├── csv_storage.py          # Persistencia histórica append-only en formato CSV local
+│   ├── sqlite_buffer.py        # Buffer relacional local SQLite para alta disponibilidad y resiliencia ante cortes
+│   ├── influxdb_storage.py     # Conector para base de datos de series de tiempo InfluxDB (opcional)
+│   └── mongodb_storage.py      # Almacenamiento en MongoDB (Local/Atlas) guardando payload completo cada 15m
+│
+├── ui/                         # Capa de interfaz de usuario
+│   └── cli.py                  # Menú CLI interactivo de 8 opciones con monitoreo por consola en línea directa
+│
+├── data/                       # Archivos de datos locales persistidos en runtime (ignorado en Git)
+│   ├── measurements.csv        # Archivo CSV acumulativo histórico
+│   └── sensor_buffer.db        # Base de datos relacional SQLite de buffer
+│
+└── logs/                       # Registros de eventos del sistema generados en ejecución (ignorado en Git)
 ```
+
 
 ---
 

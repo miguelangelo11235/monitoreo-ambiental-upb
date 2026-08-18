@@ -12,23 +12,33 @@ logger = logging.getLogger("adapters.airlink")
 
 
 def parse_airlink_response(json_data: Dict[str, Any]) -> Dict[str, Any]:
-    """Extrae y normaliza las métricas recibidas de la API local o nube de Davis AirLink."""
+    """
+    Preserva la estructura completa de la API oficial de AirLink.
+    Captura los metadatos raíz (did, name, ts) y todas las condiciones del sensor (medidas y calculadas).
+    """
     metrics = {}
     try:
         data = json_data.get("data", json_data)
-        conditions = data.get("conditions", [])
-        if isinstance(conditions, list) and len(conditions) > 0:
-            for cond in conditions:
-                for key in ["temp", "temperature", "hum", "humidity", "dew_point", "wet_bulb", "heat_index", "pm_1", "pm_2p5", "pm_10", "pressure"]:
-                    if key in cond:
-                        metrics[key] = cond[key]
-        elif isinstance(data, dict):
-            for key in ["temp", "temperature", "hum", "humidity", "pressure"]:
-                if key in data:
-                    metrics[key] = data[key]
+        if isinstance(data, dict):
+            # Preservar metadatos raíz del sensor
+            for root_key in ["did", "name", "ts"]:
+                if root_key in data:
+                    metrics[root_key] = data[root_key]
+
+            conditions = data.get("conditions", [])
+            cond = conditions[0] if (isinstance(conditions, list) and len(conditions) > 0) else data
+            if isinstance(cond, dict):
+                # Preservar todas las condiciones (mediciones y variables calculadas)
+                for k, v in cond.items():
+                    metrics[k] = v
+        elif isinstance(json_data, dict):
+            metrics = dict(json_data)
     except Exception as e:
-        logger.error(f"Error parseando respuesta de AirLink: {e}")
+        logger.error(f"Error parseando respuesta completa de AirLink: {e}")
     return metrics
+
+
+
 
 
 class AirlinkAdapter(BaseSensorAdapter):
@@ -40,19 +50,32 @@ class AirlinkAdapter(BaseSensorAdapter):
         self.consecutive_errors = 0
 
     async def fetch_from_local_api(self) -> Dict[str, Any]:
-        url = f"http://{self.config.ip}:8002/v1/current_conditions"
+        urls = [
+            f"http://{self.config.ip}/v1/current_conditions",
+            f"http://{self.config.ip}:8002/v1/current_conditions"
+        ]
+        last_error = None
         try:
             import aiohttp
             timeout = aiohttp.ClientTimeout(total=self.config.timeout_seconds)
             async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.get(url) as response:
-                    if response.status == 200:
-                        return await response.json()
-                    else:
-                        raise Exception(f"HTTP Status {response.status}")
+                for url in urls:
+                    try:
+                        async with session.get(url) as response:
+                            if response.status == 200:
+                                return await response.json()
+                            else:
+                                last_error = Exception(f"HTTP Status {response.status} en {url}")
+                    except Exception as e:
+                        last_error = e
+                        continue
+            if last_error:
+                raise last_error
+            raise Exception("No se pudo conectar a AirLink local")
         except ImportError:
             logger.warning("aiohttp no está instalado.")
             raise Exception("aiohttp no disponible")
+
 
     async def fallback_to_davis_api(self) -> Dict[str, Any]:
         station_id = self.config.station_id or self.config.id
@@ -61,14 +84,19 @@ class AirlinkAdapter(BaseSensorAdapter):
         )
 
     async def read(self) -> Measurement:
-        timestamp = datetime.now()
+        now_dt = datetime.now()
         try:
             raw_data = await self.fetch_from_local_api()
             metrics = parse_airlink_response(raw_data)
             self.consecutive_errors = 0
+
+            # Utilizar el timestamp 'ts' de la lectura del sensor si está disponible
+            ts_val = metrics.get("ts")
+            reading_dt = datetime.fromtimestamp(ts_val) if isinstance(ts_val, (int, float)) else now_dt
+
             return Measurement(
                 sensor_id=self.config.id,
-                timestamp=timestamp,
+                timestamp=reading_dt,
                 location=self.config.location,
                 metrics=metrics,
                 quality="ok"
@@ -80,9 +108,11 @@ class AirlinkAdapter(BaseSensorAdapter):
             fallback_data = await self.fallback_to_davis_api()
             if fallback_data:
                 metrics = parse_airlink_response(fallback_data)
+                ts_val = metrics.get("ts")
+                reading_dt = datetime.fromtimestamp(ts_val) if isinstance(ts_val, (int, float)) else now_dt
                 return Measurement(
                     sensor_id=self.config.id,
-                    timestamp=timestamp,
+                    timestamp=reading_dt,
                     location=self.config.location,
                     metrics=metrics,
                     quality="davis_fallback"
@@ -90,8 +120,9 @@ class AirlinkAdapter(BaseSensorAdapter):
 
             return Measurement(
                 sensor_id=self.config.id,
-                timestamp=timestamp,
+                timestamp=now_dt,
                 location=self.config.location,
                 metrics={},
                 quality="sensor_timeout"
             )
+
