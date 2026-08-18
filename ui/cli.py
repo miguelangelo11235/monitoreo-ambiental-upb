@@ -294,6 +294,126 @@ class CLIMenu:
                 await self.configure_mongodb_wizard()
         print()
 
+    async def take_current_reading(self) -> None:
+        """Opción 5: Tomar Lectura Actual bajo demanda."""
+        sensors = self.sensor_manager.list_sensors()
+        if not sensors:
+            print("\n❌ No hay sensores registrados para leer.\n")
+            return
+
+        print("\n" + "=" * 90)
+        print("         ⚡ TOMANDO LECTURA ACTUAL INSTANTÁNEA...")
+        print("=" * 90)
+        print("\nSENSORES REGISTRADOS:")
+        for idx, s in enumerate(sensors, 1):
+            print(f"  {idx}. [{s.id}] {s.name} ({s.location}) - IP/Host: {s.ip}")
+        print("  0. Leer TODOS los sensores")
+
+        choice_str = await self._async_input("\nSeleccione el número de sensor que desea leer [0]: ")
+        choice_str = choice_str.strip()
+
+        adapters_to_read = []
+        all_adapters = self.sensor_manager.get_all_adapters()
+
+        if choice_str.isdigit() and choice_str != "0":
+            idx = int(choice_str) - 1
+            if 0 <= idx < len(sensors):
+                target_sensor = sensors[idx]
+                adapters_to_read = [a for a in all_adapters if a.config.id == target_sensor.id]
+            else:
+                print("❌ Selección inválida. Leyendo todos los sensores por defecto.")
+                adapters_to_read = all_adapters
+        else:
+            adapters_to_read = all_adapters
+
+        if not adapters_to_read:
+            print("❌ No hay adaptadores activos para la selección.")
+            return
+
+        tasks = [self.collector_service._read_single_sensor(adapter) for adapter in adapters_to_read]
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+        recent = self.collector_service.recent_measurements
+        print()
+        for adapter in adapters_to_read:
+            sid = adapter.config.id
+            if sid in recent:
+                m = recent[sid]
+                ts_str = m.timestamp.strftime("%Y-%m-%d %H:%M:%S")
+                metrics = m.metrics or {}
+
+                if m.quality in ["ok", "davis_fallback"]:
+                    raw_temp = metrics.get('temp')
+                    if isinstance(raw_temp, (int, float)):
+                        temp_c_str = f"{round((raw_temp - 32) * 5 / 9, 1)}°C"
+                    else:
+                        temp_c_str = f"{raw_temp}°C" if raw_temp is not None else "N/D"
+
+                    hum = f"{metrics.get('hum')}%" if metrics.get('hum') is not None else "N/D"
+                    pm1 = f"{metrics.get('pm_1_last')} ug/m3" if metrics.get('pm_1_last') is not None else "N/D"
+                    pm25 = f"{metrics.get('pm_2p5_last')} ug/m3" if metrics.get('pm_2p5_last') is not None else "N/D"
+                    pm10 = f"{metrics.get('pm_10_last')} ug/m3" if metrics.get('pm_10_last') is not None else "N/D"
+
+                    print(f"✓ Timestamp: {ts_str} | Sensor: {sid} | Temp: {temp_c_str} | Hum: {hum} | PM1.0: {pm1} | PM2.5: {pm25} | PM10: {pm10}")
+                else:
+                    print(f"✗ Timestamp: {ts_str} | Sensor: {sid} | [sin conexión]")
+            else:
+                now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                print(f"✗ Timestamp: {now_str} | Sensor: {sid} | [sin conexión]")
+
+        print("=" * 90 + "\n")
+
+    async def start_monitoring_screen(self) -> None:
+        """Opción 6: Iniciar Monitoreo Activo."""
+        sensors = self.sensor_manager.list_sensors()
+        if not sensors:
+            print("\n❌ No hay sensores registrados para monitorear.\n")
+            return
+
+        print("\n--- CONFIGURACIÓN DE MONITOREO ACTIVO ---")
+        interval_str = await self._async_input("Ingrese la frecuencia de recolección en minutos (ej: 1, 2, 5) [1]: ")
+        interval_min = int(interval_str.strip()) if interval_str.strip().isdigit() and int(interval_str.strip()) > 0 else 1
+        
+        self.collector_service.collect_interval_min = interval_min
+
+        print("\n" + "=" * 90)
+        print(f"     ▶ INICIANDO MONITOREO ACTIVO EN TIEMPO REAL (Cada {interval_min} minuto(s))")
+        print("     Presione [ENTER] o [Ctrl + C] en cualquier momento para detener y regresar al menú.")
+        print("=" * 90 + "\n")
+
+        await self.collector_service.start()
+
+        stop_task = asyncio.create_task(self._async_input(""))
+        try:
+            while not stop_task.done():
+                await asyncio.sleep(0.5)
+        except (KeyboardInterrupt, asyncio.CancelledError):
+            pass
+        finally:
+            if not stop_task.done():
+                stop_task.cancel()
+            print("\n⏹️ Deteniendo recolección de datos...")
+            await self.collector_service.stop()
+            print("✓ Recolección detenida. Regresando al menú principal...\n")
+
+
+    async def export_data(self) -> None:
+        """Opción 7: Generar Archivo de Reporte (CSV)."""
+        print("\n--- GENERAR ARCHIVO DE REPORTE (CSV) ---")
+        days_str = await self._async_input("Ingrese rango de días hacia atrás a exportar [1]: ")
+        days = int(days_str.strip()) if days_str.strip().isdigit() else 1
+        
+        start_dt = datetime.now() - timedelta(days=days)
+        end_dt = datetime.now()
+
+        df = await self.csv_storage.export_range(start_dt, end_dt)
+        out_file = f"data/export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+        if hasattr(df, "to_csv"):
+            df.to_csv(out_file, index=False)
+            print(f"✓ {len(df)} registros exportados a {out_file}\n")
+        else:
+            print("❌ No se pudo exportar (Pandas no instalado).\n")
+
     async def configure_mongodb_wizard(self) -> None:
 
         """Opción 8: Configurar Base de Datos MongoDB y Probar Conexión."""
