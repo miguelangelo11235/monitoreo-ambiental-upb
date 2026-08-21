@@ -1,7 +1,7 @@
 {
   "sensors": [
     {
-      "id": "Airlink SITEM SEMGAS",
+      "id": "Airlink_SITEM_SEMGAS",
       "name": "Airlink SITEM SEMGAS",
       "type": "airlink",
       "protocol": "http",
@@ -9,7 +9,7 @@
       "broker": "127.0.0.1",
       "topic": null,
       "station_id": "243743",
-      "location": "Lab",
+      "location": "Polideportivo - Boulevard P1",
       "enabled": true,
       "timeout_seconds": 5
     }
