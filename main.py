@@ -50,7 +50,8 @@ async def main():
         influx_storage=influx_storage,
         mongo_storage=mongo_storage,
         alert_service=alert_service,
-        sync_interval_min=settings.mongo_save_interval_min
+        sync_interval_min=settings.mongo_save_interval_min,
+        sync_mode=getattr(settings, "mongo_sync_mode", "closed")
     )
 
     # 4. Iniciar CLI Menu (El recolector se activa opcionalmente desde la Opción 1 del Menú)

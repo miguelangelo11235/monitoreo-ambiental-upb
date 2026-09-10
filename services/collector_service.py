@@ -13,10 +13,27 @@ from storage.mongodb_storage import MongoDBStorage
 logger = logging.getLogger("services.collector")
 
 
-def _should_sync(dt: Optional[datetime] = None, interval_min: int = 15) -> bool:
-    """Verifica si el minuto actual es múltiplo del intervalo de guardado (por defecto cada 15m: :00, :15, :30, :45)."""
+def _should_sync(dt: Optional[datetime] = None, interval_min: int = 15, sync_mode: str = "closed") -> bool:
+    """Verifica si corresponde sincronizar según el modo y el intervalo de tiempo.
+    
+    Si sync_mode == 'closed', verifica que el minuto actual coincida exactamente con las horas cerradas.
+    Para interval_min de 60, la hora cerrada es :00 (minuto 0).
+    Para 15m: :00, :15, :30, :45.
+    Para 20m: :00, :20, :40.
+    Para 30m: :00, :30.
+    Para 10m: :00, :10, :20, :30, :40, :50.
+    
+    Si sync_mode == 'open', la sincronización es a intervalo regular continuo (cada X minutos transcurridos).
+    """
+    if sync_mode == "open":
+        return True
+
     now = dt or datetime.now()
-    return (now.minute % interval_min) == 0
+    if interval_min == 60:
+        return now.minute == 0
+    elif interval_min > 0:
+        return (now.minute % interval_min) == 0
+    return True
 
 class CollectorService:
     """Orquestador principal del ciclo de recolección y sincronización de datos."""
@@ -30,7 +47,8 @@ class CollectorService:
         mongo_storage: Optional[MongoDBStorage] = None,
         alert_service: Optional[AlertService] = None,
         sync_interval_min: int = 15,
-        collect_interval_min: int = 1
+        collect_interval_min: int = 1,
+        sync_mode: str = "closed"
     ):
         self.sensor_manager = sensor_manager or SensorManager()
         self.sqlite_buffer = sqlite_buffer or SQLiteBuffer()
@@ -40,6 +58,7 @@ class CollectorService:
         self.alert_service = alert_service or AlertService(self.sqlite_buffer)
         self.sync_interval_min = sync_interval_min
         self.collect_interval_min = max(1, collect_interval_min)
+        self.sync_mode = sync_mode  # "closed" u "open"
 
         self._running = False
         self._collect_task: Optional[asyncio.Task] = None
@@ -111,15 +130,29 @@ class CollectorService:
 
 
     async def sync_loop(self) -> None:
-        """Loop de sincronización ejecutado periódicamente (cada sync_interval_min minutos)."""
-        logger.info(f"Iniciando bucle de sincronización (intervalos de {self.sync_interval_min}m)...")
+        """Loop de sincronización ejecutado periódicamente."""
+        mode_label = "Horas cerradas" if self.sync_mode == "closed" else "Intervalo abierto"
+        logger.info(f"Iniciando bucle de sincronización (Modo: {mode_label}, intervalo: {self.sync_interval_min}m)...")
         last_synced_minute = -1
+        last_open_sync_time: Optional[datetime] = None
+
         while self._running:
             now = datetime.now()
-            if _should_sync(now, self.sync_interval_min) and now.minute != last_synced_minute:
-                last_synced_minute = now.minute
+            should_execute = False
+
+            if self.sync_mode == "closed":
+                if _should_sync(now, self.sync_interval_min, "closed") and now.minute != last_synced_minute:
+                    should_execute = True
+                    last_synced_minute = now.minute
+            else:
+                # Modo abierto: sincronizar cada self.sync_interval_min minutos exactos transcurridos
+                if last_open_sync_time is None or (now - last_open_sync_time).total_seconds() >= self.sync_interval_min * 60:
+                    should_execute = True
+                    last_open_sync_time = now
+
+            if should_execute:
                 self.last_sync_time = now
-                logger.info(f"Sincronizando a las {now.strftime('%H:%M:%S')}...")
+                logger.info(f"Sincronizando a las {now.strftime('%H:%M:%S')} (Modo: {mode_label})...")
                 try:
                     count = await self.sqlite_buffer.flush_to_csv(self.csv_storage)
                     logger.info(f"Sincronización completada: {count} registros transferidos a CSV.")

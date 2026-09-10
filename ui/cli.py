@@ -435,13 +435,12 @@ class CLIMenu:
                 creds_host = rest.split("@", 1)
                 display_uri = f"{proto}://*****:*****@{creds_host[1]}"
 
-            mongo_ok = MongoDBStorage.validate_connection(current_uri) if settings.mongo_uri else False
-            status_str = "✓ CONECTADO" if mongo_ok else "✗ DESCONECTADO"
-
+            mode_str = "Horas Cerradas" if getattr(settings, "mongo_sync_mode", "closed") == "closed" else "Intervalo Abierto"
             print(f" Estado Actual : {status_str}")
             print(f" URI Actual    : {display_uri}")
             print(f" Base de Datos : {settings.mongo_db}")
             print(f" Colección     : {settings.mongo_collection}")
+            print(f" Modo Guardado : {mode_str}")
             print(f" Intervalo     : {settings.mongo_save_interval_min} minutos")
             print("=" * 70)
 
@@ -452,7 +451,7 @@ class CLIMenu:
             print(" 4. Diagnóstico de Red e IP para Raspberry Pi (Resolver DNS / IP Pública Atlas)")
             print(" 5. Cambiar Plantilla URI de MongoDB (Cluster URL)")
             print(" 6. Configurar Nombre de Base de Datos y Colección")
-            print(" 7. Cambiar intervalo de guardado en MongoDB (actual: %dm)" % settings.mongo_save_interval_min)
+            print(" 7. Configurar Modo e Intervalo de Guardado en MongoDB (Horas cerradas vs Abierto)")
             print(" 8. Volver al menú principal")
 
             sub_choice = await self._async_input("\nSeleccione una opción [1-8]: ")
@@ -587,14 +586,50 @@ class CLIMenu:
                 print("✓ Configuración de BD/Colección actualizada en .env\n")
 
             elif sub_choice == "7":
-                new_int = await self._async_input("Ingrese nuevo intervalo de guardado en minutos [15]: ")
-                if new_int.strip().isdigit() and int(new_int.strip()) > 0:
-                    val = int(new_int.strip())
-                    save_env_variable("MONGO_SAVE_INTERVAL_MIN", str(val))
-                    settings.mongo_save_interval_min = val
-                    if self.collector_service:
-                        self.collector_service.sync_interval_min = val
-                    print(f"✓ Intervalo actualizado a {val} minutos y guardado en .env\n")
+                print("\n--- CONFIGURACIÓN DE INTERVALO Y MODO DE REGISTRO EN MONGODB ---")
+                print("Seleccione la modalidad de registro:")
+                print(" 1. Horas cerradas (Recomendado: fija minutos exactos :00, :15, :30, etc.)")
+                print(" 2. Intervalo abierto (Sincroniza continuamente a intervalos de N minutos desde que inicia)")
+                
+                mode_choice = await self._async_input("Seleccione modalidad [1]: ")
+                mode_choice = mode_choice.strip()
+                selected_mode = "open" if mode_choice == "2" else "closed"
+
+                if selected_mode == "closed":
+                    print("\nSeleccione el intervalo a horas cerradas:")
+                    print(" 1. Cada 10 minutos (:00, :10, :20, :30, :40, :50)")
+                    print(" 2. Cada 15 minutos (:00, :15, :30, :45) [Por defecto]")
+                    print(" 3. Cada 20 minutos (:00, :20, :40)")
+                    print(" 4. Cada 30 minutos (:00, :30)")
+                    print(" 5. Cada 60 minutos (:00)")
+                    print(" 6. Otro intervalo personalizado")
+
+                    int_sel = await self._async_input("Seleccione opción [2]: ")
+                    int_sel = int_sel.strip()
+                    interval_mapping = {"1": 10, "2": 15, "3": 20, "4": 30, "5": 60}
+                    
+                    if int_sel in interval_mapping:
+                        selected_interval = interval_mapping[int_sel]
+                    elif int_sel == "6":
+                        custom_val = await self._async_input("Ingrese los minutos para horas cerradas (ej: 5, 10, 15): ")
+                        selected_interval = int(custom_val.strip()) if custom_val.strip().isdigit() and int(custom_val.strip()) > 0 else 15
+                    else:
+                        selected_interval = 15
+                else:
+                    custom_val = await self._async_input("Ingrese la frecuencia en minutos para intervalo abierto [15]: ")
+                    selected_interval = int(custom_val.strip()) if custom_val.strip().isdigit() and int(custom_val.strip()) > 0 else 15
+
+                save_env_variable("MONGO_SYNC_MODE", selected_mode)
+                save_env_variable("MONGO_SAVE_INTERVAL_MIN", str(selected_interval))
+                settings.mongo_sync_mode = selected_mode
+                settings.mongo_save_interval_min = selected_interval
+                
+                if self.collector_service:
+                    self.collector_service.sync_mode = selected_mode
+                    self.collector_service.sync_interval_min = selected_interval
+
+                label_mode = "Horas cerradas" if selected_mode == "closed" else "Intervalo abierto"
+                print(f"\n✓ Modalidad configurada: '{label_mode}' cada {selected_interval} minutos. Guardado en .env\n")
 
             elif sub_choice == "8":
                 break

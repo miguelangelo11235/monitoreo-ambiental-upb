@@ -142,9 +142,16 @@ Al ejecutar `python main.py`, verás la lista del menú principal de 9 opciones:
 - Exporta las mediciones históricas a un archivo CSV (`data/export_YYYYMMDD_HHMMSS.csv`) indicando los días hacia atrás a consultar.
 
 ### Opción 8: Configurar Base de Datos MongoDB (y Probar Conexión)
-- Muestra el estado actual de la conexión a MongoDB.
-- Asistente directo para ingresar **Usuario y Contraseña de MongoDB Atlas** o la URI completa.
-- Permite modificar el intervalo de guardado (por defecto 15 minutos) y ejecutar una **prueba de conexión inmediata**.
+- Muestra el estado actual de la conexión a MongoDB y la modalidad de guardado.
+- Permite elegir la modalidad de registro:
+  - **Horas cerradas (Recomendado):** Alinea los registros a minutos exactos del reloj:
+    - **10 min:** `:00`, `:10`, `:20`, `:30`, `:40`, `:50`
+    - **15 min:** `:00`, `:15`, `:30`, `:45` (Por defecto)
+    - **20 min:** `:00`, `:20`, `:40`
+    - **30 min:** `:00`, `:30`
+    - **60 min:** `:00`
+  - **Intervalo abierto:** Envía mediciones a intervalos regulares continuos de $N$ minutos transcurridos a partir de la hora de inicio.
+- Asistente directo para ingresar **Usuario y Contraseña de MongoDB Atlas** o la URI completa y ejecutar una **prueba de conexión inmediata**.
 
 ### Opción 9: Salir
 - Finaliza la aplicación realizando un vaciado de datos seguro (*flush*) del buffer SQLite hacia CSV y cerrado limpio de servicios.

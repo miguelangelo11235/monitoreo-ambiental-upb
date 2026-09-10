@@ -48,6 +48,7 @@ try:
         mongo_db: str = "air_quality"
         mongo_collection: str = "raw_measurements"
         mongo_save_interval_min: int = 15
+        mongo_sync_mode: str = "closed"
 
         model_config = SettingsConfigDict(
             env_file=".env",
@@ -77,6 +78,7 @@ except ImportError:
             mongo_db: str = "air_quality"
             mongo_collection: str = "raw_measurements"
             mongo_save_interval_min: int = 15
+            mongo_sync_mode: str = "closed"
 
             class Config:
                 env_file = ".env"
@@ -104,6 +106,7 @@ except ImportError:
             mongo_db: str = os.getenv("MONGO_DB", "air_quality")
             mongo_collection: str = os.getenv("MONGO_COLLECTION", "raw_measurements")
             mongo_save_interval_min: int = int(os.getenv("MONGO_SAVE_INTERVAL_MIN", 15))
+            mongo_sync_mode: str = os.getenv("MONGO_SYNC_MODE", "closed")
 
 
 
