@@ -435,6 +435,8 @@ class CLIMenu:
                 creds_host = rest.split("@", 1)
                 display_uri = f"{proto}://*****:*****@{creds_host[1]}"
 
+            mongo_ok = MongoDBStorage.validate_connection(current_uri) if settings.mongo_uri else False
+            status_str = "✓ CONECTADO" if mongo_ok else "✗ DESCONECTADO"
             mode_str = "Horas Cerradas" if getattr(settings, "mongo_sync_mode", "closed") == "closed" else "Intervalo Abierto"
             print(f" Estado Actual : {status_str}")
             print(f" URI Actual    : {display_uri}")
