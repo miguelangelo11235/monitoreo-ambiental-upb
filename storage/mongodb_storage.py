@@ -29,18 +29,81 @@ class MongoDBStorage(BaseStorage):
         self._collection: Optional[Collection] = None
 
     @staticmethod
-    def validate_connection(uri: str, timeout_ms: int = 3000) -> bool:
+    def validate_connection(uri: str, timeout_ms: int = 5000) -> bool:
         """Prueba rápida de conexión a la URI indicada de MongoDB."""
+        success, _, _ = MongoDBStorage.validate_connection_detailed(uri, timeout_ms=timeout_ms)
+        return success
+
+    @staticmethod
+    def validate_connection_detailed(uri: str, timeout_ms: int = 5000) -> tuple[bool, str, str]:
+        """
+        Valida la conexión a MongoDB y retorna (éxito, resumen_error, diagnostico_detallado).
+        """
         if not uri:
-            return False
+            return False, "URI no configurada", "No se ha proporcionado una URI de conexión a MongoDB."
+
         try:
-            temp_client = MongoClient(uri, serverSelectionTimeoutMS=timeout_ms)
+            temp_client = MongoClient(uri, serverSelectionTimeoutMS=timeout_ms, connectTimeoutMS=timeout_ms)
             temp_client.admin.command("ping")
             temp_client.close()
-            return True
+            return True, "Conexión Exitosa", "✓ Conexión establecida correctamente con el servidor MongoDB."
         except Exception as e:
-            logger.error("Error al validar conexión con MongoDB (%s): %s", uri, e)
-            return False
+            err_msg = str(e)
+            logger.error("Error al validar conexión con MongoDB (%s): %s", uri, err_msg)
+            
+            diag_lines = []
+            err_lower = err_msg.lower()
+
+            if "resolution lifetime expired" in err_lower or "lifetime expired" in err_lower or "dns" in err_lower or "srv" in err_lower or "servname" in err_lower:
+                summary = "Error de Resolución DNS SRV en Raspberry Pi"
+                diag_lines.append("❌ DETECTADO: El servidor DNS de tu red o Raspberry Pi no puede resolver los registros DNS SRV (mongodb+srv://).")
+                diag_lines.append("   Error exacto: " + err_msg.split('\n')[0])
+                diag_lines.append("\n💡 ¿POR QUÉ SUCEDE EN LA RASPBERRY PI Y NO EN LA PC?")
+                diag_lines.append("   MongoDB Compass en tu PC utiliza resolvers DNS del sistema operativo o plantillas con caché.")
+                diag_lines.append("   En Linux/Raspberry Pi, 'dnspython' consulta directamente a tu router/DNS local, el cual")
+                diag_lines.append("   a menudo bloquea o no responde a tiempo a las consultas de registros DNS TXT/SRV de MongoDB Atlas.")
+                diag_lines.append("\n🔧 SOLUCIONES EN LA RASPBERRY PI:")
+                diag_lines.append("   1. Cambiar los servidores DNS de la Raspberry Pi a Google (8.8.8.8) o Cloudflare (1.1.1.1):")
+                diag_lines.append("      En la consola de la Raspberry Pi ejecuta:")
+                diag_lines.append("        sudo nano /etc/resolv.conf")
+                diag_lines.append("      Y agrega como primera línea:")
+                diag_lines.append("        nameserver 8.8.8.8")
+                diag_lines.append("   2. Asegurar que 'dnspython' y 'pymongo' estén actualizados en el entorno virtual:")
+                diag_lines.append("        pip install --upgrade dnspython pymongo")
+                diag_lines.append("   3. Usar URI directa (formato mongodb:// con nodos o IP) si estás en una red muy restringida.")
+
+            elif "bad auth" in err_lower or "authentication failed" in err_lower or "code 18" in err_lower or "operationfailure" in err_lower:
+                summary = "Error de Autenticación (Credenciales Incorrectas)"
+                diag_lines.append("❌ DETECTADO: Usuario o contraseña rechazados por el cluster de MongoDB Atlas.")
+                diag_lines.append("   Error exacto: " + err_msg.split('\n')[0])
+                diag_lines.append("\n💡 RECOMENDACIONES:")
+                diag_lines.append("   • Verifica las credenciales en MongoDB Atlas (Database Access).")
+                diag_lines.append("   • Si la contraseña o usuario contienen caracteres especiales (como @, #, $, %, ?, &),")
+                diag_lines.append("     se requiere URL Encoding. (La opción 1 del menú aplica auto-encoding automáticamente).")
+
+            elif "serverselectiontimeout" in err_lower or "timed out" in err_lower or "connection refused" in err_lower:
+                summary = "Tiempo de Espera Agotado (Timeout de Red / IP Bloqueada)"
+                diag_lines.append("❌ DETECTADO: No se recibió respuesta de los nodos de MongoDB.")
+                diag_lines.append("   Error exacto: " + err_msg.split('\n')[0])
+                diag_lines.append("\n💡 RECOMENDACIONES:")
+                diag_lines.append("   • Asegúrate de agregar la IP de tu Raspberry Pi en MongoDB Atlas -> Network Access.")
+                diag_lines.append("   • Para pruebas rápidas, puedes agregar la IP 0.0.0.0/0 (Permitir acceso desde cualquier lugar).")
+                diag_lines.append("   • Verifica que la Raspberry Pi tenga acceso a Internet en el puerto 27017.")
+
+            elif "ssl" in err_lower or "certificate" in err_lower or "tls" in err_lower:
+                summary = "Error de Certificado SSL/TLS"
+                diag_lines.append("❌ DETECTADO: Falló la verificación de certificado de seguridad SSL/TLS.")
+                diag_lines.append("   Error exacto: " + err_msg.split('\n')[0])
+                diag_lines.append("\n💡 RECOMENDACIONES:")
+                diag_lines.append("   • Verifica que la fecha y hora de la Raspberry Pi estén sincronizadas ('date').")
+                diag_lines.append("   • Ejecuta: 'sudo apt update && sudo apt install -y ca-certificates'")
+
+            else:
+                summary = "Error de Conexión a MongoDB"
+                diag_lines.append("❌ DETECTADO: Ocurrió un error general al intentar conectar.")
+                diag_lines.append("   Error exacto: " + err_msg)
+
+            return False, summary, "\n".join(diag_lines)
 
     def _get_collection(self) -> Optional[Collection]:
         """Obtiene la colección MongoDB, conectándose si es necesario."""

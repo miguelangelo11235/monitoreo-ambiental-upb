@@ -127,3 +127,28 @@ class NetworkService:
     async def check_internet_connectivity(timeout: float = 3.0) -> bool:
         return await NetworkService.test_http_endpoint("https://www.google.com", timeout=timeout)
 
+    @staticmethod
+    async def get_public_ip() -> Optional[str]:
+        """Obtiene la IP pública actual utilizando api.ipify.org."""
+        try:
+            import aiohttp
+            async with aiohttp.ClientSession() as session:
+                async with session.get("https://api.ipify.org?format=json", timeout=aiohttp.ClientTimeout(total=4)) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        return data.get("ip")
+        except Exception:
+            pass
+        return None
+
+    @staticmethod
+    async def test_dns_resolution(domain: str = "google.com") -> tuple[bool, str]:
+        """Prueba si el resolver DNS actual puede resolver un dominio."""
+        def _check():
+            try:
+                ip = socket.gethostbyname(domain)
+                return True, f"✓ Dominio '{domain}' resuelto a IP: {ip}"
+            except Exception as e:
+                return False, f"❌ Fallo al resolver '{domain}': {e}"
+        return await asyncio.to_thread(_check)
+
